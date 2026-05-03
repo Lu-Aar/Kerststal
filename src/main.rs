@@ -11,7 +11,7 @@ use esp_hal::rng::Rng;
 use esp_hal::{
     delay::Delay,
     clock::CpuClock,
-    gpio::DriveMode,
+    gpio::{AnyPin, DriveMode, Pin},
     ledc::{
         channel::{self, ChannelIFace, Number},
         timer::{self, TimerIFace},
@@ -19,6 +19,7 @@ use esp_hal::{
     },
     time::Rate,
 };
+
 
 fn random_data(rng: &mut Rng) -> (u8, u16) {
     let coin_flip = rng.random() % 100;
@@ -54,91 +55,71 @@ async fn main(_spawner: embassy_executor::Spawner) {
         frequency: Rate::from_khz(24),
     });
 
-    let led0 = peripherals.GPIO0;
-    let led1 = peripherals.GPIO1;
-    let led2 = peripherals.GPIO2;
-    let led3 = peripherals.GPIO3;
-    let led4 = peripherals.GPIO4;
+    let mut pins: [Option<AnyPin>; 5] = [
+        Some(peripherals.GPIO0.degrade()),
+        Some(peripherals.GPIO1.degrade()),
+        Some(peripherals.GPIO2.degrade()),
+        Some(peripherals.GPIO3.degrade()),
+        Some(peripherals.GPIO4.degrade()),
+    ];
 
-    // Configure all 5 LEDC channels for concurrent PWM control
-    let mut channel0 = ledc.channel(Number::Channel0, led0);
-    let _ = channel0.configure(channel::config::Config {
-        timer: &lstimer0,
-        duty_pct: 100,
-        drive_mode: DriveMode::PushPull
-    });
-    let mut channel1 = ledc.channel(Number::Channel1, led1);
-    let _ = channel1.configure(channel::config::Config {
-        timer: &lstimer0,
-        duty_pct: 100,
-        drive_mode: DriveMode::PushPull,
-    });
-    let mut channel2 = ledc.channel(Number::Channel2, led2);
-    let _ = channel2.configure(channel::config::Config {
-        timer: &lstimer0,
-        duty_pct: 100,
-        drive_mode: DriveMode::PushPull,
-    });
-    let mut channel3 = ledc.channel(Number::Channel3, led3);
-    let _ = channel3.configure(channel::config::Config {
-        timer: &lstimer0,
-        duty_pct: 100,
-        drive_mode: DriveMode::PushPull,
-    });
-    let mut channel4 = ledc.channel(Number::Channel4, led4);
-    let _ = channel4.configure(channel::config::Config {
-        timer: &lstimer0,
-        duty_pct: 100,
-        drive_mode: DriveMode::PushPull,
-    });
+    let channel_numbers = [
+        Number::Channel0,
+        Number::Channel1,
+        Number::Channel2, 
+        Number::Channel3,
+        Number::Channel4,
+    ];
 
+    let channels: [_; 5] = core::array::from_fn(|i| {
+        let pin = pins[i].take().unwrap(); 
+        
+        let mut chan = ledc.channel(channel_numbers[i], pin);
+        chan.configure(channel::config::Config {
+            timer: &lstimer0,
+            duty_pct: 100,
+            drive_mode: DriveMode::PushPull,
+        }).unwrap();
+        chan
+    });
     let mut rng = Rng::new();
 
     let delay = Delay::new();
 
     loop {
         
+        let mut rand_data = [(0u8, 0u16); 5];
         // Generate random minimum brightness for each LED
-        let (min0, rng_speed0) = random_data(&mut rng);
-        let (min1, rng_speed1) = random_data(&mut rng);
-        let (min2, rng_speed2) = random_data(&mut rng);
-        let (min3, rng_speed3) = random_data(&mut rng);
-        let (min4, rng_speed4) = random_data(&mut rng);
+        for ii in 0..5 {
+            rand_data[ii] = random_data(&mut rng);
+        }
 
         // Fade back down
-        let _ = channel0.start_duty_fade(100, min0, rng_speed0);
-        delay.delay_millis(rng.random() % 50);
-        let _ = channel1.start_duty_fade(100, min1, rng_speed1);
-        delay.delay_millis(rng.random() % 50);
-        let _ = channel2.start_duty_fade(100, min2, rng_speed2);
-        delay.delay_millis(rng.random() % 50);
-        let _ = channel3.start_duty_fade(100, min3, rng_speed3);
-        delay.delay_millis(rng.random() % 50);
-        let _ = channel4.start_duty_fade(100, min4, rng_speed4);
+        for ii in 0..5 {
+             let (min, speed) = rand_data[ii];
+             let _ = channels[ii].start_duty_fade(100, min, speed);
+             delay.delay_millis(rng.random() % 50);
+        }
         
-        delay.delay_millis(rng_speed0.max(rng_speed1).max(rng_speed2).max(rng_speed3).max(rng_speed4) as u32);
+        delay.delay_millis(rand_data.iter().map(|(_, speed)| *speed).max().unwrap() as u32);
 
-        // Start all fades simultaneously
-        let _ = channel0.start_duty_fade(min0, 100, rng_speed0);
-        delay.delay_millis(rng.random() % 50);
-        let _ = channel1.start_duty_fade(min1, 100, rng_speed1);
-        delay.delay_millis(rng.random() % 50);
-        let _ = channel2.start_duty_fade(min2, 100, rng_speed2);
-        delay.delay_millis(rng.random() % 50);
-        let _ = channel3.start_duty_fade(min3, 100, rng_speed3);
-        delay.delay_millis(rng.random() % 50);
-        let _ = channel4.start_duty_fade(min4, 100, rng_speed4);
+        // Fade up again
+        for ii in 0..5 {
+            let (min, speed) = rand_data[ii];
+            let _ = channels[ii].start_duty_fade(min, 100, speed);
+            delay.delay_millis(rng.random() % 50);
+        }
         
-        delay.delay_millis(rng_speed0.max(rng_speed1).max(rng_speed2).max(rng_speed3).max(rng_speed4) as u32);
+        delay.delay_millis(rand_data.iter().map(|(_, speed)| *speed).max().unwrap() as u32);
 
         if rng.random() % 8 == 0 {
-            let _ = channel2.start_duty_fade(100, 5, 150);
-            let _ = channel3.start_duty_fade(100, 5, 150);
-            let _ = channel4.start_duty_fade(100, 5, 150);
+            for ii in 2..=4 {
+                let _ = channels[ii].start_duty_fade(100, 5, 150);
+            }
             delay.delay_millis(150);
-            let _ = channel2.start_duty_fade(5, 100, 150);
-            let _ = channel3.start_duty_fade(5, 100, 150);
-            let _ = channel4.start_duty_fade(5, 100, 150);
+            for ii in 2..=4 {
+                let _ = channels[ii].start_duty_fade(5, 100, 150);
+            }
             delay.delay_millis(150);
         }
 

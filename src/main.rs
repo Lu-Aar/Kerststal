@@ -8,9 +8,10 @@
 
 use embassy_time::{Duration, Timer};
 use esp_backtrace as _;
-use esp_hal::ledc::channel::config::PinConfig;
 use esp_hal::rng::Rng;
 use esp_hal::{
+    clock::CpuClock,
+    gpio::DriveMode,
     ledc::{
         channel::{self, ChannelIFace, Number},
         timer::{self, TimerIFace},
@@ -19,6 +20,13 @@ use esp_hal::{
     time::Rate,
 };
 use esp_println::println;
+
+// Busy-wait delay that doesn't need time driver
+fn delay_ms(ms: u32) {
+    for _ in 0..(ms * 10_000) {
+        core::hint::spin_loop();
+    }
+}
 
 /// Perform one blink cycle: fade from minimum to 100% and back
 async fn blink<'a, S: timer::TimerSpeed + 'a>(
@@ -53,9 +61,14 @@ fn random_data(rng: &mut Rng) -> (u8, u16, bool) {
     (min, rng_speed, dip)
 }
 
-#[esp_hal_embassy::main]
+esp_bootloader_esp_idf::esp_app_desc!();
+
+#[esp_rtos::main]
 async fn main(_spawner: embassy_executor::Spawner) {
-    let peripherals = esp_hal::init(esp_hal::Config::default());
+    let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
+    
+    let _systimer = esp_hal::timer::systimer::SystemTimer::new(peripherals.SYSTIMER);
+    
     let mut ledc = Ledc::new(peripherals.LEDC);
     ledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
 
@@ -78,34 +91,34 @@ async fn main(_spawner: embassy_executor::Spawner) {
     let _ = channel0.configure(channel::config::Config {
         timer: &lstimer0,
         duty_pct: 100,
-        pin_config: PinConfig::PushPull,
+        drive_mode: DriveMode::PushPull
     });
     let mut channel1 = ledc.channel(Number::Channel1, led1);
     let _ = channel1.configure(channel::config::Config {
         timer: &lstimer0,
         duty_pct: 100,
-        pin_config: PinConfig::PushPull,
+        drive_mode: DriveMode::PushPull,
     });
     let mut channel2 = ledc.channel(Number::Channel2, led2);
     let _ = channel2.configure(channel::config::Config {
         timer: &lstimer0,
         duty_pct: 100,
-        pin_config: PinConfig::PushPull,
+        drive_mode: DriveMode::PushPull,
     });
     let mut channel3 = ledc.channel(Number::Channel3, led3);
     let _ = channel3.configure(channel::config::Config {
         timer: &lstimer0,
         duty_pct: 100,
-        pin_config: PinConfig::PushPull,
+        drive_mode: DriveMode::PushPull,
     });
     let mut channel4 = ledc.channel(Number::Channel4, led4);
     let _ = channel4.configure(channel::config::Config {
         timer: &lstimer0,
         duty_pct: 100,
-        pin_config: PinConfig::PushPull,
+        drive_mode: DriveMode::PushPull,
     });
 
-    let mut rng = Rng::new(peripherals.RNG);
+    let mut rng = Rng::new();
 
     loop {
         // Generate random minimum brightness for each LED
